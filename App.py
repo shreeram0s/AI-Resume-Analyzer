@@ -12,4 +12,4 @@ st.write("""
 """)
 
 # Footer message
-st.success("🔹 Developed by Shreeram Rajaram Gaonkar")
+st.success("kiran bsdk")
