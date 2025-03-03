@@ -16,29 +16,23 @@ YOUTUBE_API_KEY = "AIzaSyBoRgw0WE_KzTVNUvH8d4MiTo1zZ2SqKPI"
 YOUTUBE_API_SERVICE_NAME = "youtube"
 YOUTUBE_API_VERSION = "v3"
 
-# Streamlit UI Enhancements
+# Set Page Configuration
 st.set_page_config(page_title="AI Resume Analyzer", page_icon="📄", layout="wide")
 
-st.markdown(
-    """
-    <style>
-        .main {background-color: #F8F9FA;}
-        .stButton > button {width: 100%;}
-        .stTable {border-radius: 8px;}
-        h1 {color: #0073E6; text-align: center;}
-        h2, h3 {color: #333333;}
-        .stAlert {border-radius: 10px;}
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+# Initialize session state
+if "skills_analyzed" not in st.session_state:
+    st.session_state.skills_analyzed = False
+    st.session_state.missing_skills = []
+    st.session_state.matching_score = 0.0
+    st.session_state.resume_skills = []
+    st.session_state.job_skills = []
 
+# Streamlit UI
 st.title("📄 AI Resume Analyzer & Skill Enhancer")
 st.markdown("Analyze your resume, compare it with job requirements, and get AI-driven course recommendations! 🎯")
 
-# Layout using columns
+# Layout for file upload
 col1, col2 = st.columns(2)
-
 with col1:
     resume_file = st.file_uploader("📄 Upload Resume (PDF, DOCX, TXT)", type=["pdf", "docx", "txt"], key="resume")
 with col2:
@@ -84,42 +78,53 @@ if resume_file and job_file:
         matching_score = round(float(util.pytorch_cos_sim(st_model.encode(resume_text, convert_to_tensor=True),
                                                            st_model.encode(job_text, convert_to_tensor=True))[0]), 2) * 100
         
-        st.subheader("📊 Resume Matching Score")
-        st.success(f"Your resume matches **{matching_score}%** of the job requirements.")
+        # Store results in session state
+        st.session_state.skills_analyzed = True
+        st.session_state.missing_skills = missing_skills
+        st.session_state.matching_score = matching_score
+        st.session_state.resume_skills = extracted_resume_skills
+        st.session_state.job_skills = job_skills
         
-        st.subheader("⚠️ Missing Skills")
-        if missing_skills:
-            st.warning(f"You are missing: {', '.join(missing_skills)}")
+        st.success("Skills analyzed successfully! Scroll down to see the results.")
+
+# Display results if analysis has been done
+if st.session_state.skills_analyzed:
+    st.subheader("📊 Resume Matching Score")
+    st.success(f"Your resume matches **{st.session_state.matching_score}%** of the job requirements.")
+    
+    st.subheader("⚠️ Missing Skills")
+    if st.session_state.missing_skills:
+        st.warning(f"You are missing: {', '.join(st.session_state.missing_skills)}")
+    else:
+        st.success("Great! You have all the required skills.")
+    
+    # Skill comparison chart
+    all_skills = list(set(st.session_state.resume_skills + st.session_state.job_skills))
+    resume_counts = [1 if skill in st.session_state.resume_skills else 0 for skill in all_skills]
+    job_counts = [1 if skill in st.session_state.job_skills else 0 for skill in all_skills]
+    
+    df = pd.DataFrame({"Skills": all_skills, "Resume": resume_counts, "Job Requirements": job_counts})
+    df.set_index("Skills").plot(kind="bar", figsize=(8, 4), color=["#0073E6", "#E63946"], alpha=0.7)
+    plt.xticks(rotation=45)
+    plt.ylabel("Presence (1 = Present, 0 = Missing)")
+    plt.title("Resume vs. Job Skills Comparison")
+    st.pyplot(plt)
+    
+    st.markdown("---")  # Divider
+    
+    if st.button("📚 Get Recommended Courses"):
+        youtube = googleapiclient.discovery.build(YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION, developerKey=YOUTUBE_API_KEY)
+        all_courses = []
+        for skill in st.session_state.missing_skills:
+            request = youtube.search().list(q=f"{skill} course", part="snippet", maxResults=5, type="video")
+            response = request.execute()
+            all_courses.extend([
+                {"Title": item["snippet"]["title"], "Channel": item["snippet"]["channelTitle"], "Video Link": f'https://www.youtube.com/watch?v={item["id"]["videoId"]}'}
+                for item in response["items"]
+            ])
+        
+        if all_courses:
+            st.subheader("🎥 Recommended YouTube Courses")
+            st.table(pd.DataFrame(all_courses))
         else:
-            st.success("Great! You have all the required skills.")
-        
-        # Skill comparison chart
-        all_skills = list(set(extracted_resume_skills + job_skills))
-        resume_counts = [1 if skill in extracted_resume_skills else 0 for skill in all_skills]
-        job_counts = [1 if skill in job_skills else 0 for skill in all_skills]
-        
-        df = pd.DataFrame({"Skills": all_skills, "Resume": resume_counts, "Job Requirements": job_counts})
-        df.set_index("Skills").plot(kind="bar", figsize=(8, 4), color=["#0073E6", "#E63946"], alpha=0.7)
-        plt.xticks(rotation=45)
-        plt.ylabel("Presence (1 = Present, 0 = Missing)")
-        plt.title("Resume vs. Job Skills Comparison")
-        st.pyplot(plt)
-        
-        st.markdown("---")  # Divider
-        
-        if st.button("📚 Get Recommended Courses"):
-            youtube = googleapiclient.discovery.build(YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION, developerKey=YOUTUBE_API_KEY)
-            all_courses = []
-            for skill in missing_skills:
-                request = youtube.search().list(q=f"{skill} course", part="snippet", maxResults=5, type="video")
-                response = request.execute()
-                all_courses.extend([
-                    {"Title": item["snippet"]["title"], "Channel": item["snippet"]["channelTitle"], "Video Link": f'https://www.youtube.com/watch?v={item["id"]["videoId"]}'}
-                    for item in response["items"]
-                ])
-            
-            if all_courses:
-                st.subheader("🎥 Recommended YouTube Courses")
-                st.table(pd.DataFrame(all_courses))
-            else:
-                st.error("No courses found. Try again later!")
+            st.error("No courses found. Try again later!")
