@@ -1,56 +1,125 @@
 import streamlit as st
-import pdfplumber
-import docx
+import requests
 import pandas as pd
+import pdfplumber
+import docx2txt
 import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+import matplotlib.pyplot as plt
+from sentence_transformers import SentenceTransformer, util
+import googleapiclient.discovery
 
-# Function to extract text from PDF
-def extract_text_from_pdf(uploaded_file):
-    with pdfplumber.open(uploaded_file) as pdf:
-        text = "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
-    return text
+# Load AI Model
+st_model = SentenceTransformer('all-MiniLM-L6-v2')
 
-# Function to extract text from DOCX
-def extract_text_from_docx(uploaded_file):
-    doc = docx.Document(uploaded_file)
-    text = "\n".join([para.text for para in doc.paragraphs])
-    return text
+# YouTube API Key (Replace with a new secured key)
+YOUTUBE_API_KEY = "AIzaSyBoRgw0WE_KzTVNUvH8d4MiTo1zZ2SqKPI"
+YOUTUBE_API_SERVICE_NAME = "youtube"
+YOUTUBE_API_VERSION = "v3"
 
-# Function to compare resume and job description
-def compare_texts(resume_text, job_desc_text):
-    vectorizer = TfidfVectorizer(stop_words='english')
-    tfidf_matrix = vectorizer.fit_transform([resume_text, job_desc_text])
-    similarity_score = cosine_similarity(tfidf_matrix[0], tfidf_matrix[1])[0][0]
-    return round(similarity_score * 100, 2)  # Convert to percentage
+# Streamlit UI Enhancements
+st.set_page_config(page_title="AI Resume Analyzer", page_icon="📄", layout="wide")
 
-# Streamlit UI
-st.title("📄 AI Resume Analyzer")
+st.markdown(
+    """
+    <style>
+        .main {background-color: #F8F9FA;}
+        .stButton > button {width: 100%;}
+        .stTable {border-radius: 8px;}
+        h1 {color: #0073E6; text-align: center;}
+        h2, h3 {color: #333333;}
+        .stAlert {border-radius: 10px;}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-st.sidebar.header("Upload Files")
-resume_file = st.sidebar.file_uploader("Upload Resume (PDF/DOCX)", type=["pdf", "docx"])
-job_desc_file = st.sidebar.file_uploader("Upload Job Description (TXT/DOCX)", type=["txt", "docx"])
+st.title("📄 AI Resume Analyzer & Skill Enhancer")
+st.markdown("Analyze your resume, compare it with job requirements, and get AI-driven course recommendations! 🎯")
 
-if resume_file and job_desc_file:
-    # Extract text
-    resume_text = extract_text_from_pdf(resume_file) if resume_file.name.endswith(".pdf") else extract_text_from_docx(resume_file)
-    job_desc_text = extract_text_from_docx(job_desc_file) if job_desc_file.name.endswith(".docx") else job_desc_file.read().decode("utf-8")
+# Layout using columns
+col1, col2 = st.columns(2)
 
-    # Compare and display results
-    match_score = compare_texts(resume_text, job_desc_text)
-    st.subheader("🔍 Match Analysis")
-    st.write(f"**Matching Score:** {match_score}%")
+with col1:
+    resume_file = st.file_uploader("📄 Upload Resume (PDF, DOCX, TXT)", type=["pdf", "docx", "txt"], key="resume")
+with col2:
+    job_file = st.file_uploader("📄 Upload Job Description (PDF, DOCX, TXT)", type=["pdf", "docx", "txt"], key="job")
 
-    # Suggestions based on score
-    if match_score >= 80:
-        st.success("✅ Your resume is a great match for this job!")
-    elif 50 <= match_score < 80:
-        st.warning("⚠️ Your resume is a moderate match. Consider improving alignment with job keywords.")
-    else:
-        st.error("❌ Your resume does not match well. Try updating it with relevant skills and experience.")
+st.markdown("---")  # Divider
 
-    st.subheader("📌 Recommendations")
-    st.write("🔹 Ensure the resume includes key skills mentioned in the job description.")
-    st.write("🔹 Optimize bullet points and align them with the job requirements.")
-    st.write("🔹 Use industry-specific terminology to improve alignment.")
+# Function to extract text from files
+def extract_text(uploaded_file):
+    if uploaded_file is not None:
+        ext = uploaded_file.name.split(".")[-1].lower()
+        if ext == "pdf":
+            with pdfplumber.open(uploaded_file) as pdf:
+                return "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
+        elif ext in ["docx", "doc"]:
+            return docx2txt.process(uploaded_file)
+        elif ext == "txt":
+            return uploaded_file.read().decode("utf-8")
+        else:
+            st.error("Unsupported file format! Please upload PDF, DOCX, or TXT.")
+    return ""
+
+if resume_file and job_file:
+    resume_text = extract_text(resume_file)
+    job_text = extract_text(job_file)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("📌 Resume Summary")
+        st.write(resume_text[:300] + "...")
+    with col2:
+        st.subheader("📌 Job Description Summary")
+        st.write(job_text[:300] + "...")
+    
+    st.markdown("---")  # Divider
+    
+    if st.button("🚀 Analyze Skills & Matching Score"):
+        resume_skills = ["Python", "Machine Learning", "Data Science", "AI", "Deep Learning", "NLP", "SQL", "Power BI", "Tableau", "TensorFlow", "Pandas", "Numpy"]
+        job_skills = [skill for skill in resume_skills if skill.lower() in job_text.lower()]
+        extracted_resume_skills = [skill for skill in resume_skills if skill.lower() in resume_text.lower()]
+        missing_skills = list(set(job_skills) - set(extracted_resume_skills))
+        
+        matching_score = round(float(util.pytorch_cos_sim(st_model.encode(resume_text, convert_to_tensor=True),
+                                                           st_model.encode(job_text, convert_to_tensor=True))[0]), 2) * 100
+        
+        st.subheader("📊 Resume Matching Score")
+        st.success(f"Your resume matches **{matching_score}%** of the job requirements.")
+        
+        st.subheader("⚠️ Missing Skills")
+        if missing_skills:
+            st.warning(f"You are missing: {', '.join(missing_skills)}")
+        else:
+            st.success("Great! You have all the required skills.")
+        
+        # Skill comparison chart
+        all_skills = list(set(extracted_resume_skills + job_skills))
+        resume_counts = [1 if skill in extracted_resume_skills else 0 for skill in all_skills]
+        job_counts = [1 if skill in job_skills else 0 for skill in all_skills]
+        
+        df = pd.DataFrame({"Skills": all_skills, "Resume": resume_counts, "Job Requirements": job_counts})
+        df.set_index("Skills").plot(kind="bar", figsize=(8, 4), color=["#0073E6", "#E63946"], alpha=0.7)
+        plt.xticks(rotation=45)
+        plt.ylabel("Presence (1 = Present, 0 = Missing)")
+        plt.title("Resume vs. Job Skills Comparison")
+        st.pyplot(plt)
+        
+        st.markdown("---")  # Divider
+        
+        if st.button("📚 Get Recommended Courses"):
+            youtube = googleapiclient.discovery.build(YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION, developerKey=YOUTUBE_API_KEY)
+            all_courses = []
+            for skill in missing_skills:
+                request = youtube.search().list(q=f"{skill} course", part="snippet", maxResults=5, type="video")
+                response = request.execute()
+                all_courses.extend([
+                    {"Title": item["snippet"]["title"], "Channel": item["snippet"]["channelTitle"], "Video Link": f'https://www.youtube.com/watch?v={item["id"]["videoId"]}'}
+                    for item in response["items"]
+                ])
+            
+            if all_courses:
+                st.subheader("🎥 Recommended YouTube Courses")
+                st.table(pd.DataFrame(all_courses))
+            else:
+                st.error("No courses found. Try again later!")
